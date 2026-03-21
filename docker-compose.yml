@@ -1,0 +1,30 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: smoketest-security-fix-6:latest
+    container_name: smoketest-security-fix-6-app
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      - PORT=3000
+      - DEPLOY_ENV=${DEPLOY_ENV:-development}
+    restart: unless-stopped
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+    # Health check (inherits from Dockerfile, overriding here for clarity)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/count"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
