@@ -10,6 +10,7 @@ docker-compose.yml
 # Docs
 README.md
 *.md
+docs/
 
 # Node.js
 node_modules
