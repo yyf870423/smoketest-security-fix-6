@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [staging, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect project type
+        id: detect
+        run: |
+          if [ -f "src/backend/package.json" ]; then
+            echo "type=node" >> $GITHUB_OUTPUT
+          elif [ -f "src/backend/requirements.txt" ]; then
+            echo "type=python" >> $GITHUB_OUTPUT
+          elif [ -f "package.json" ]; then
+            echo "type=node-root" >> $GITHUB_OUTPUT
+          elif [ -f "requirements.txt" ]; then
+            echo "type=python-root" >> $GITHUB_OUTPUT
+          else
+            echo "type=unknown" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Node.js 项目 ──
+      - name: Setup Node.js
+        if: steps.detect.outputs.type == 'node' || steps.detect.outputs.type == 'node-root'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install & Test (Node.js - src/backend)
+        if: steps.detect.outputs.type == 'node'
+        run: |
+          cd src/backend
+          npm ci
+          npm test 2>&1 | tee /tmp/test-output.txt
+          npm run lint 2>&1 || true
+
+      - name: Install & Test (Node.js - root)
+        if: steps.detect.outputs.type == 'node-root'
+        run: |
+          npm ci
+          npm test 2>&1 | tee /tmp/test-output.txt
+          npm run lint 2>&1 || true
+
+      # ── Python 项目 ──
+      - name: Setup Python
+        if: steps.detect.outputs.type == 'python' || steps.detect.outputs.type == 'python-root'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install & Test (Python - src/backend)
+        if: steps.detect.outputs.type == 'python'
+        run: |
+          cd src/backend
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+          python -m pytest --tb=short -v 2>&1 | tee /tmp/test-output.txt
+
+      - name: Install & Test (Python - root)
+        if: steps.detect.outputs.type == 'python-root'
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+          python -m pytest --tb=short -v 2>&1 | tee /tmp/test-output.txt
+
+      # ── 安全扫描 ──
+      - name: Security scan (Node.js)
+        if: steps.detect.outputs.type == 'node' || steps.detect.outputs.type == 'node-root'
+        run: |
+          npm audit --audit-level=high 2>&1 || true
+
+      - name: Security scan (Python)
+        if: steps.detect.outputs.type == 'python' || steps.detect.outputs.type == 'python-root'
+        run: |
+          pip install pip-audit
+          pip-audit 2>&1 || true
+
+      # ── Docker build 验证 ──
+      - name: Docker build test
+        if: hashFiles('docker-compose.yml') != ''
+        run: docker compose build --no-cache
+
+      # ── 通知飞书（Bot API 私聊）──
+      - name: Get Feishu Token
+        if: always()
+        id: feishu_token
+        run: |
+          TOKEN=$(curl -s -X POST https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal \
+            -H "Content-Type: application/json" \
+            -d "{\"app_id\":\"${{ secrets.FEISHU_APP_ID }}\",\"app_secret\":\"${{ secrets.FEISHU_APP_SECRET }}\"}" \
+            | jq -r '.tenant_access_token')
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Notify Feishu (success)
+        if: success()
+        run: |
+          curl -s -X POST "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id" \
+            -H "Authorization: Bearer ${{ steps.feishu_token.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"receive_id\":\"${{ secrets.FEISHU_NOTIFY_OPEN_ID }}\",\"msg_type\":\"text\",\"content\":\"{\\\"text\\\":\\\"✅ CI 通过: ${{ github.event.pull_request.title }}\\nPR: ${{ github.event.pull_request.html_url }}\\n分支: ${{ github.head_ref }}\\\"}\"}"
+
+      - name: Notify Feishu (failure)
+        if: failure()
+        run: |
+          curl -s -X POST "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id" \
+            -H "Authorization: Bearer ${{ steps.feishu_token.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"receive_id\":\"${{ secrets.FEISHU_NOTIFY_OPEN_ID }}\",\"msg_type\":\"text\",\"content\":\"{\\\"text\\\":\\\"❌ CI 失败: ${{ github.event.pull_request.title }}\\nPR: ${{ github.event.pull_request.html_url }}\\n日志: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\\\"}\"}"

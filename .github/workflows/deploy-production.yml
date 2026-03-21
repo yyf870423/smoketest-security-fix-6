@@ -1,0 +1,38 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Feishu
+        run: |
+          TOKEN=$(curl -s -X POST https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal \
+            -H "Content-Type: application/json" \
+            -d "{\"app_id\":\"${{ secrets.FEISHU_APP_ID }}\",\"app_secret\":\"${{ secrets.FEISHU_APP_SECRET }}\"}" \
+            | jq -r '.tenant_access_token')
+          curl -s -X POST "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"receive_id\":\"${{ secrets.FEISHU_NOTIFY_OPEN_ID }}\",\"msg_type\":\"text\",\"content\":\"{\\\"text\\\":\\\"🚀 main 分支更新，Dispatcher 正在部署 Production 环境...\\\"}\"}"
+
+      # ── Phase 3 取消注释 ──
+      # - uses: actions/checkout@v4
+      # - name: Login to Aliyun Registry
+      #   run: echo "${{ secrets.ALIYUN_REGISTRY_PASSWORD }}" | docker login -u "${{ secrets.ALIYUN_REGISTRY_USER }}" --password-stdin ${{ secrets.ALIYUN_REGISTRY }}
+      # - name: Build and push
+      #   run: |
+      #     docker compose build
+      #     docker compose push
+      # - name: Deploy to production server
+      #   uses: appleboy/ssh-action@v1
+      #   with:
+      #     host: ${{ secrets.PRODUCTION_HOST }}
+      #     username: deploy
+      #     key: ${{ secrets.DEPLOY_SSH_KEY }}
+      #     script: |
+      #       cd /opt/app && docker compose pull && docker compose up -d
